@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Catch the Fruits 🍎🍌🍊</title>
+  <style>
+    :root{--bg:#f3f9ff;--panel:#ffffff;--accent:#2b8cff;--danger:#ff6b6b}
+    html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+    body{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,var(--bg),#eaf3ff);}
+    .wrap{width:min(900px,96vw);max-width:1000px;background:var(--panel);box-shadow:0 8px 30px rgba(20,40,80,0.12);border-radius:14px;padding:14px;}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+    h1{font-size:18px;margin:0;display:flex;gap:8px;align-items:center}
+    .hud{display:flex;gap:10px;align-items:center}
+    .stat{background:#f6f9ff;padding:8px 12px;border-radius:10px;font-weight:600}
+    .danger{background:linear-gradient(90deg,#ffeef0,#fff5f5);color:var(--danger)}
+    #gameCanvas{display:block;width:100%;height:540px;background:linear-gradient(#cde7ff, #fff9eb);border-radius:10px;touch-action:none}
+    .controls{display:flex;gap:8px;align-items:center;margin-top:10px}
+    .btn{background:var(--accent);color:white;padding:8px 12px;border-radius:8px;border:none;font-weight:700;cursor:pointer}
+    .btn.secondary{background:#e6eefc;color:#0b3b84}
+    .small{font-size:13px;padding:6px 10px}
+    .overlay{position:relative}
+    .touch-row{display:flex;gap:8px;align-items:center;margin-left:auto}
+    .touch-btn{width:56px;height:56px;border-radius:12px;border:none;background:#fff;color:#333;font-size:22px;box-shadow:0 6px 14px rgba(20,40,80,0.08);}
+    .center{text-align:center}
+    /* responsive */
+    @media (max-width:520px){#gameCanvas{height:420px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Catch the Fruits <span>🍎🍌🍊</span></h1>
+      <div class="hud">
+        <div id="score" class="stat">Score: 0</div>
+        <div id="misses" class="stat">Misses: 0 / 5</div>
+        <button id="restartBtn" class="btn small">Restart</button>
+      </div>
+    </header>
+
+    <div class="overlay">
+      <canvas id="gameCanvas" width="900" height="540" aria-label="Catch the Fruits game"></canvas>
+    </div>
+
+    <div class="controls">
+      <div>Controls: ← → keys or touch</div>
+      <div class="touch-row">
+        <button id="leftTouch" class="touch-btn">◀</button>
+        <button id="rightTouch" class="touch-btn">▶</button>
+      </div>
+    </div>
+
+    <p style="margin-top:10px;color:#5b6b80;font-size:13px">Catch fruits to score points. Missing 5 fruits ends the game. Tap Restart to play again.</p>
+  </div>
+
+  <script>
+    // Single-file Catch the Fruits game
+    (function(){
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      // make canvas resolution-aware
+      function resizeCanvas(){
+        const ratio = window.devicePixelRatio || 1;
+        const w = canvas.clientWidth;
+        const h = canvas.clientHeight;
+        canvas.width = Math.floor(w * ratio);
+        canvas.height = Math.floor(h * ratio);
+        ctx.setTransform(ratio,0,0,ratio,0,0);
+      }
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas();
+
+      const scoreEl = document.getElementById('score');
+      const missesEl = document.getElementById('misses');
+      const restartBtn = document.getElementById('restartBtn');
+      const leftTouch = document.getElementById('leftTouch');
+      const rightTouch = document.getElementById('rightTouch');
+
+      const FRUITS = ['🍎','🍌','🍊','🍇','🍒','🥭','🍐','🍓'];
+
+      let game = null;
+
+      function startGame(){
+        if(game) game.stop();
+        game = new Game({maxMisses:5});
+        game.start();
+      }
+
+      restartBtn.addEventListener('click', startGame);
+
+      class Fruit{
+        constructor(x,y,emoji,size,vy,rotation){
+          this.x = x; this.y = y; this.emoji = emoji; this.size = size; this.vy = vy; this.rotation = rotation || 0; this.caught = false;
+        }
+        update(dt){
+          this.y += this.vy * dt;
+          this.rotation += 0.005 * dt;
+        }
+        draw(ctx){
+          ctx.save();
+          ctx.translate(this.x, this.y);
+          ctx.rotate(this.rotation);
+          ctx.font = `${this.size}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(this.emoji, 0, 0);
+          ctx.restore();
+        }
+      }
+
+      class Basket{
+        constructor(w,h,x,y){
+          this.w = w; this.h = h; this.x = x; this.y = y; this.speed = 520; // px/sec
+        }
+        moveLeft(dt){
+          this.x = Math.max(this.w/2, this.x - this.speed*dt);
+        }
+        moveRight(dt,canvasW){
+          this.x = Math.min(canvasW - this.w/2, this.x + this.speed*dt);
+        }
+        draw(ctx){
+          // basket body
+          ctx.save();
+          ctx.translate(this.x, this.y);
+          // shadow
+          ctx.beginPath();
+          ctx.ellipse(0, this.h*0.55, this.w*0.55, this.h*0.22, 0, 0, Math.PI*2);
+          ctx.fillStyle = 'rgba(20,40,80,0.06)';
+          ctx.fill();
+
+          // basket rim
+          ctx.fillStyle = '#6b3b00';
+          roundRect(ctx, -this.w/2, -this.h/2, this.w, this.h, 12);
+          ctx.fill();
+          // stripes
+          ctx.fillStyle = '#a86b2b33';
+          for(let i=-this.w/2+8;i<this.w/2-8;i+=16){
+            ctx.fillRect(i, -this.h/2+6, 8, this.h-12);
+          }
+
+          ctx.restore();
+        }
+        bounds(){
+          return {left: this.x - this.w/2, right: this.x + this.w/2, top: this.y - this.h/2, bottom: this.y + this.h/2};
+        }
+      }
+
+      function roundRect(ctx,x,y,w,h,r){
+        const radius = r || 6;
+        ctx.beginPath();
+        ctx.moveTo(x+radius,y);
+        ctx.arcTo(x+w,y,x+w,y+h,radius);
+        ctx.arcTo(x+w,y+h,x,y+h,radius);
+        ctx.arcTo(x,y+h,x,y,radius);
+        ctx.arcTo(x,y,x+w,y,radius);
+        ctx.closePath();
+      }
+
+      class Game{
+        constructor(opts){
+          this.maxMisses = opts.maxMisses || 5;
+          this.score = 0;
+          this.misses = 0;
+          this.fruits = [];
+          this.lastSpawn = 0;
+          this.spawnInterval = 800; // ms
+          this.running = false;
+          this.lastTime = 0;
+          this.keys = {left:false,right:false};
+          this.touching = {left:false,right:false};
+          this.basket = null;
+          this._boundLoop = this.loop.bind(this);
+          this.gameOver = false;
+        }
+        start(){
+          this.reset();
+          this.running = true;
+          this.lastTime = performance.now();
+          requestAnimationFrame(this._boundLoop);
+          this.attachControls();
+        }
+        reset(){
+          this.score = 0; this.misses = 0; this.fruits = []; this.lastSpawn = 0; this.gameOver = false;
+          // create basket
+          const cw = canvas.clientWidth; const ch = canvas.clientHeight;
+          const bw = Math.min(160, cw*0.18);
+          const bh = Math.min(46, ch*0.085);
+          this.basket = new Basket(bw, bh, cw/2, ch - bh/2 - 12);
+          updateHud(this.score, this.misses, this.maxMisses);
+        }
+        stop(){
+          this.running = false;
+          this.detachControls();
+        }
+        attachControls(){
+          window.addEventListener('keydown', this._keyDown = (e)=>{
+            if(e.key === 'ArrowLeft' || e.key === 'Left') this.keys.left = true;
+            if(e.key === 'ArrowRight' || e.key === 'Right') this.keys.right = true;
+          });
+          window.addEventListener('keyup', this._keyUp = (e)=>{
+            if(e.key === 'ArrowLeft' || e.key === 'Left') this.keys.left = false;
+            if(e.key === 'ArrowRight' || e.key === 'Right') this.keys.right = false;
+          });
+
+          // touch buttons
+          leftTouch.addEventListener('touchstart', this._ltOn = (e)=>{e.preventDefault(); this.touching.left=true});
+          leftTouch.addEventListener('touchend', this._ltOff = (e)=>{e.preventDefault(); this.touching.left=false});
+          rightTouch.addEventListener('touchstart', this._rtOn = (e)=>{e.preventDefault(); this.touching.right=true});
+          rightTouch.addEventListener('touchend', this._rtOff = (e)=>{e.preventDefault(); this.touching.right=false});
+
+          // drag on canvas
+          let activePointer = null;
+          canvas.addEventListener('pointerdown', this._pd = (e)=>{canvas.setPointerCapture(e.pointerId); activePointer = e.pointerId; this.pointerX = e.clientX;});
+          canvas.addEventListener('pointermove', this._pm = (e)=>{ if(activePointer === e.pointerId){ const rect = canvas.getBoundingClientRect(); const px = e.clientX - rect.left; this.basket.x = Math.max(this.basket.w/2, Math.min(rect.width - this.basket.w/2, px)); }});
+          window.addEventListener('pointerup', this._pu = (e)=>{ if(activePointer === e.pointerId){ try{canvas.releasePointerCapture(e.pointerId);}catch(_e){} activePointer = null; }});
+        }
+        detachControls(){
+          window.removeEventListener('keydown', this._keyDown);
+          window.removeEventListener('keyup', this._keyUp);
+          leftTouch.removeEventListener('touchstart', this._ltOn);
+          leftTouch.removeEventListener('touchend', this._ltOff);
+          rightTouch.removeEventListener('touchstart', this._rtOn);
+          rightTouch.removeEventListener('touchend', this._rtOff);
+          canvas.removeEventListener('pointerdown', this._pd);
+          canvas.removeEventListener('pointermove', this._pm);
+          window.removeEventListener('pointerup', this._pu);
+        }
+        spawn(){
+          const rect = canvas.getBoundingClientRect();
+          const x = Math.random() * (rect.width - 40) + 20;
+          const size = 28 + Math.random()*28; // emoji font size
+          const vy = 80 + Math.random()*160; // px/sec
+          const emoji = FRUITS[Math.floor(Math.random()*FRUITS.length)];
+          this.fruits.push(new Fruit(x, -30, emoji, size, vy/1000));
+        }
+        loop(now){
+          if(!this.running) return;
+          resizeCanvas();
+          const dt = Math.min(60, now - this.lastTime);
+          this.lastTime = now;
+
+          // spawn control
+          this.lastSpawn += dt;
+          if(this.lastSpawn > this.spawnInterval){
+            this.lastSpawn = 0;
+            this.spawnInterval = 600 + Math.random()*900; // vary spawn
+            this.spawn();
+          }
+
+          // moves
+          const dtSec = dt/1000;
+          if(this.keys.left || this.touching.left) this.basket.moveLeft(dtSec);
+          if(this.keys.right || this.touching.right) this.basket.moveRight(dtSec, canvas.clientWidth);
+
+          // update fruits
+          for(let f of this.fruits){ f.update(dt); }
+
+          // collision
+          const basketBounds = this.basket.bounds();
+          for(let i=this.fruits.length-1;i>=0;i--){
+            const f = this.fruits[i];
+            if(f.y - f.size/2 > canvas.clientHeight + 20){
+              // missed
+              this.fruits.splice(i,1);
+              this.misses++;
+              updateHud(this.score, this.misses, this.maxMisses);
+              if(this.misses >= this.maxMisses){ this.endGame(); }
+              continue;
+            }
+            // simple rect-circle check
+            if(f.y + f.size/3 >= basketBounds.top && f.x >= basketBounds.left && f.x <= basketBounds.right){
+              // caught
+              this.fruits.splice(i,1);
+              this.score += 1;
+              updateHud(this.score, this.misses, this.maxMisses);
+              continue;
+            }
+          }
+
+          // draw
+          this.draw();
+
+          if(!this.gameOver) requestAnimationFrame(this._boundLoop);
+        }
+        draw(){
+          const w = canvas.clientWidth; const h = canvas.clientHeight;
+          // clear
+          ctx.clearRect(0,0,w,h);
+
+          // background decorative clouds / sun
+          drawBackground(ctx,w,h);
+
+          // fruits
+          for(let f of this.fruits){ f.draw(ctx); }
+
+          // basket
+          this.basket.draw(ctx);
+
+          // top guideline
+          if(this.gameOver){
+            drawGameOver(ctx, this.score);
+          }
+        }
+        endGame(){
+          this.gameOver = true;
+          this.running = false;
+          // show final overlay state
+          updateHud(this.score, this.misses, this.maxMisses, true);
+          // flash canvas
+          drawGameOver(ctx, this.score);
+        }
+      }
+
+      function drawBackground(ctx,w,h){
+        // sun
+        const sunX = w - 90; const sunY = 80;
+        const grd = ctx.createRadialGradient(sunX,sunY,10,sunX,sunY,70);
+        grd.addColorStop(0,'#fff6c8'); grd.addColorStop(1,'#ffd86b');
+        ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(sunX,sunY,60,0,Math.PI*2); ctx.fill();
+
+        // clouds - simple shapes
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath(); ctx.ellipse(90,70,60,30,0,0,Math.PI*2); ctx.ellipse(150,70,40,26,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(220,40,48,26,0,0,Math.PI*2); ctx.ellipse(260,40,34,20,0,0,Math.PI*2); ctx.fill();
+
+        // grass strip
+        ctx.fillStyle = '#e6fff0'; ctx.fillRect(0,h-70,w,70);
+        // ground line
+        ctx.fillStyle = '#d7f3da'; ctx.fillRect(0,h-36,w,36);
+      }
+
+      function drawGameOver(ctx,score){
+        const w = canvas.clientWidth, h = canvas.clientHeight;
+        // translucent overlay
+        ctx.fillStyle = 'rgba(6,12,30,0.4)'; ctx.fillRect(0,0,w,h);
+        // panel
+        const pw = Math.min(520, w-40); const ph = 180;
+        ctx.fillStyle = 'white'; roundRect(ctx, (w-pw)/2, (h-ph)/2, pw, ph, 12); ctx.fill();
+        // text
+        ctx.fillStyle = '#0b2540'; ctx.font = '22px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Game Over', w/2, (h-ph)/2 + 48);
+        ctx.fillStyle = '#0b2540'; ctx.font = '16px system-ui'; ctx.fillText(`Score: ${score}`, w/2, (h-ph)/2 + 86);
+      }
+
+      function updateHud(score, misses, maxMisses){
+        scoreEl.textContent = 'Score: ' + score;
+        missesEl.textContent = 'Misses: ' + misses + ' / ' + maxMisses;
+        if(misses >= maxMisses) missesEl.classList.add('danger'); else missesEl.classList.remove('danger');
+      }
+
+      // start automatically
+      startGame();
+
+    })();
+  </script>
+</body>
+</html>
