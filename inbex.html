@@ -27,6 +27,7 @@
     @media (max-width:520px){#gameCanvas{height:420px}}
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <header>
@@ -87,6 +88,7 @@
       }
 
       restartBtn.addEventListener('click', startGame);
+      // (removed global 'R' restart) Restart will be available on the game-over overlay only
 
       class Fruit{
         constructor(x,y,emoji,size,vy,rotation){
@@ -180,7 +182,8 @@
           this.attachControls();
         }
         reset(){
-          this.score = 0; this.misses = 0; this.fruits = []; this.lastSpawn = 0; this.gameOver = false;
+            this.score = 0; this.misses = 0; this.fruits = []; this.lastSpawn = 0; this.gameOver = false;
+            this.restartButtonRect = null;
           // create basket
           const cw = canvas.clientWidth; const ch = canvas.clientHeight;
           const bw = Math.min(160, cw*0.18);
@@ -213,6 +216,18 @@
           canvas.addEventListener('pointerdown', this._pd = (e)=>{canvas.setPointerCapture(e.pointerId); activePointer = e.pointerId; this.pointerX = e.clientX;});
           canvas.addEventListener('pointermove', this._pm = (e)=>{ if(activePointer === e.pointerId){ const rect = canvas.getBoundingClientRect(); const px = e.clientX - rect.left; this.basket.x = Math.max(this.basket.w/2, Math.min(rect.width - this.basket.w/2, px)); }});
           window.addEventListener('pointerup', this._pu = (e)=>{ if(activePointer === e.pointerId){ try{canvas.releasePointerCapture(e.pointerId);}catch(_e){} activePointer = null; }});
+          // detect clicks on the game-over restart button
+          canvas.addEventListener('pointerup', this._click = (e)=>{
+            if(!this.gameOver) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const r = this.restartButtonRect;
+            if(r && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom){
+              // startGame is in outer scope
+              startGame();
+            }
+          });
         }
         detachControls(){
           window.removeEventListener('keydown', this._keyDown);
@@ -223,6 +238,7 @@
           rightTouch.removeEventListener('touchend', this._rtOff);
           canvas.removeEventListener('pointerdown', this._pd);
           canvas.removeEventListener('pointermove', this._pm);
+          canvas.removeEventListener('pointerup', this._click);
           window.removeEventListener('pointerup', this._pu);
         }
         spawn(){
@@ -290,16 +306,31 @@
           // background decorative clouds / sun
           drawBackground(ctx,w,h);
 
-          // fruits
-          for(let f of this.fruits){ f.draw(ctx); }
+            // fruits
+            for(let f of this.fruits){ f.draw(ctx); }
 
-          // basket
-          this.basket.draw(ctx);
+            // basket
+            this.basket.draw(ctx);
 
-          // top guideline
-          if(this.gameOver){
-            drawGameOver(ctx, this.score);
-          }
+            // in-canvas HUD while playing (shows score & misses)
+            if(!this.gameOver){
+              ctx.save();
+              const hudW = 220, hudH = 36;
+              ctx.fillStyle = 'rgba(255,255,255,0.85)';
+              roundRect(ctx, 10, 10, hudW, hudH, 10);
+              ctx.fill();
+              ctx.fillStyle = 'rgba(6,12,30,0.9)';
+              ctx.font = '14px system-ui';
+              ctx.textAlign = 'left';
+              ctx.textBaseline = 'middle';
+              ctx.fillText(`Score: ${this.score}   Misses: ${this.misses} / ${this.maxMisses}`, 18, 28);
+              ctx.restore();
+            }
+
+            // game-over overlay
+            if(this.gameOver){
+              drawGameOver(ctx, this.score, this);
+            }
         }
         endGame(){
           this.gameOver = true;
@@ -307,7 +338,7 @@
           // show final overlay state
           updateHud(this.score, this.misses, this.maxMisses, true);
           // flash canvas
-          drawGameOver(ctx, this.score);
+          drawGameOver(ctx, this.score, this);
         }
       }
 
@@ -329,16 +360,28 @@
         ctx.fillStyle = '#d7f3da'; ctx.fillRect(0,h-36,w,36);
       }
 
-      function drawGameOver(ctx,score){
+      // draw an overlay and, if provided, expose a clickable restart button via gameInstance.restartButtonRect
+      function drawGameOver(ctx,score,gameInstance){
         const w = canvas.clientWidth, h = canvas.clientHeight;
         // translucent overlay
         ctx.fillStyle = 'rgba(6,12,30,0.4)'; ctx.fillRect(0,0,w,h);
         // panel
-        const pw = Math.min(520, w-40); const ph = 180;
-        ctx.fillStyle = 'white'; roundRect(ctx, (w-pw)/2, (h-ph)/2, pw, ph, 12); ctx.fill();
+        const pw = Math.min(520, w-40); const ph = 220;
+        const px = (w-pw)/2, py = (h-ph)/2;
+        ctx.fillStyle = 'white'; roundRect(ctx, px, py, pw, ph, 12); ctx.fill();
         // text
-        ctx.fillStyle = '#0b2540'; ctx.font = '22px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Game Over', w/2, (h-ph)/2 + 48);
-        ctx.fillStyle = '#0b2540'; ctx.font = '16px system-ui'; ctx.fillText(`Score: ${score}`, w/2, (h-ph)/2 + 86);
+        ctx.fillStyle = '#0b2540'; ctx.font = '22px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Game Over', w/2, py + 48);
+        ctx.fillStyle = '#0b2540'; ctx.font = '16px system-ui'; ctx.fillText(`Score: ${score}`, w/2, py + 86);
+
+        // restart button
+        const btnW = 140, btnH = 40;
+        const bx = w/2 - btnW/2, by = py + ph - btnH - 20;
+        ctx.fillStyle = '#2b8cff'; roundRect(ctx, bx, by, btnW, btnH, 10); ctx.fill();
+        ctx.fillStyle = 'white'; ctx.font = '16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('Restart', bx + btnW/2, by + btnH/2);
+
+        // expose button region so pointer handler can detect clicks
+        if(gameInstance) gameInstance.restartButtonRect = {left: bx, top: by, right: bx + btnW, bottom: by + btnH};
       }
 
       function updateHud(score, misses, maxMisses){
@@ -353,4 +396,5 @@
     })();
   </script>
 </body>
+
 </html>
